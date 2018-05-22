@@ -2,12 +2,94 @@ from scipy import io
 import tensorflow as tf
 import numpy as np
 
-import h5py
-import cv2
 import os
+import csv
+import cv2
+import h5py
 import random
 
-from TURN import unit
+try:
+    
+    from .TURN import unit
+
+except:
+    
+    from TURN import unit
+
+def load_tvsum(c, ext = '.mp4', mode = 'unit'):
+
+    dataset = 'TVSum'
+
+    video_path = os.path.join(dataset, 'video')
+
+    anno_path = os.path.join(dataset, 'data', 'ydata-tvsum50-anno.tsv')
+
+    info_path = os.path.join(dataset, 'data', 'ydata-tvsum50-info.tsv')
+
+    mat_path = os.path.join(dataset, 'matlab', 'ydata-tvsum50.mat')
+    
+    feature_path = os.path.join('feature', dataset, mode)
+
+    original_score_level = 'shot'
+
+    user_score = []
+
+    fps = []
+
+    nframes = []#dict()
+
+    gt_score = []
+
+    video_name = []
+
+    high = 5
+
+    low = 1
+
+    shot_duration = 2 # 2 sec
+    
+    net = c.net
+
+    with open(anno_path) as fd:
+        
+        rd = csv.reader(fd, delimiter = "\t", quotechar = '"')
+
+        for us in rd: # user summary
+
+            if us[0] not in video_name:
+
+                video_name.append(us[0])
+
+                vidx = video_name.index(us[0])
+
+                capture = cv2.VideoCapture(os.path.join(video_path, us[0] + ext))
+
+                fps.append(int(capture.get(cv2.CAP_PROP_FPS))) # get fps
+                
+                nframes.append(int(capture.get(cv2.CAP_PROP_FRAME_COUNT))) # get fps
+
+                user_score.append([])
+
+            user_score[vidx].append(np.asarray(us[2].split(',')).astype(float) / high) # repeat shot_duration * fps times for frame score
+        
+        for vidx in range(len(video_name)): # video key
+
+            gt_score.append(np.asarray(user_score[vidx]).mean(axis = 0))
+
+            user_score[vidx] = np.asarray(user_score[vidx])
+
+    for video in video_name:
+
+        if mode == 'unit':
+
+            if not os.path.isfile(os.path.join(feature_path, '{}_US[{}]_SR[{}].h5'.format(video, c.unit_size, c.sample_rate))):
+
+                print('Extracting Unit Level Feature for [ {} ]'.format(os.path.join(video_path, video + ext)))
+
+                net = unit.sampling(video + ext, c.size, c.unit_size, c.sample_rate, net, c.gpu, c.mfe, video_path, feature_path, reuse = True)
+
+    return gt_score, video_name, video_path, user_score
+    
 
 def load_vsumm(dataset_path = 'VSUMM/database', skip = None, c = None, mode = 'unit', ext = '.mpg'):
     
@@ -92,7 +174,15 @@ def load_vsumm(dataset_path = 'VSUMM/database', skip = None, c = None, mode = 'u
 
             summary.append(user_summary)
 
-        summary = np.asarray(summary).sum(axis = 0)
+        summary = np.asarray(summary).mean(axis = 0)
+
+        #print(summary.shape)
+
+        #for i in range(int(int(summary.shape[0]) / 20)):
+
+         #   print(summary[i * 20 : (i+1) * 20])
+
+        #raise
 
         data.append(summary)
         
@@ -116,7 +206,7 @@ def load_summe(dataset_path = 'SumMe/videos', skip = None, mode = 'unit', c = No
 
     video_name = []
 
-    summary = []
+    summary = []; user_score = [];
 
     net = c.net
 
@@ -146,11 +236,25 @@ def load_summe(dataset_path = 'SumMe/videos', skip = None, mode = 'unit', c = No
 
         f = io.loadmat(os.path.join(summary_path, v_name + '.mat'))
 
+        #print('gt_score : ', f['gt_score'].shape)
+        
+        #print('user_score : ', f['user_score'].shape)
+
+        #print(np.sum(f['gt_score']) * f['user_score'].shape[1])
+
+        #print(np.sum(f['user_score']))
+
+        #raise
+
         summary.append(f['gt_score'])
+        
+        user_score.append(f['user_score'])
+        
         
         #for i in summary[0]:
 
-         #   print(i)
+        #   print(i)
+        
         #raise
         
         #if skip is None or skip == 0:
@@ -165,8 +269,7 @@ def load_summe(dataset_path = 'SumMe/videos', skip = None, mode = 'unit', c = No
 
          #   raise ValueError('Incorrect of Parameter Skip')
 
-    return summary, video_name, dataset_path
-
+    return summary, video_name, dataset_path, user_score
 
 class data(object):
 
@@ -182,7 +285,11 @@ class data(object):
 
         elif self.dataset_name == 'SumMe':
 
-            self.original_score, self.video_name, self.path = load_summe(c = c)
+            self.original_score, self.video_name, self.path, self.original_user_score = load_summe(c = c)
+        
+        elif self.dataset_name == 'TVSum':
+
+            self.original_score, self.video_name, self.path, self.original_user_score = load_tvsum(c = c)
 
         else:
 
@@ -197,8 +304,10 @@ class data(object):
         self.physical = list(range(self.dataset_size))
 
         self.virtual = list(range(self.dataset_size))
+
+        if self.c.mode == 'train':
     
-        random.shuffle(self.physical)
+            random.shuffle(self.physical)
 
         self.skipped_frame_index = [] # for from skipping
     
@@ -231,15 +340,13 @@ class data(object):
 
         self.score = np.zeros((self.c.nbatch, self.current_batch_max_nunits, 1))
         
+        self.user_score = []
+        
         for b in range(self.c.nbatch):
+
+            self.user_score.append(self.original_user_score[self.physical[self.batch[b]]])
             
             for u in range(self.nunits[b]):
-
-                #print('u :' , u)
-
-                #print('nunit : ', self.nunits[b])
-                
-                #print('self score : ', self.score.shape)
 
                 start = u * self.c.sample_rate
 
@@ -247,18 +354,25 @@ class data(object):
 
                 unit_score = None
 
-                if self.dataset_name == 'SumMe':
+                if self.dataset_name == 'SumMe' or 'TVSum':
+
+                    #print('unit_score : ', self.original_score[self.physical[self.batch[b]]][start : end])
+                    #print('unit_score : ', np.mean(self.original_score[self.physical[self.batch[b]]][start : end]))
+
+                    #print('original_score : ', self.original_score[self.physical[self.batch[b]]].shape)
 
                     unit_score = np.mean(self.original_score[self.physical[self.batch[b]]][start : end])
 
                 elif self.dataset_name == 'VSUMM':
                 
-                    unit_score = np.mean(self.original_score[self.physical[self.batch[b]]][start : end])
+                    unit_score = np.sum(self.original_score[self.physical[self.batch[b]]][start : end])
                 
-                if unit_score > self.c.threshold:
+                if unit_score > self.c.tth:
 
                     self.score[b, u] = 1.0
-
+                
+                #self.score[b,u] = unit_score
+                
                     #for offset in range(self.erange):
 
                         #if u + offset < self.nunits[b]:
@@ -382,9 +496,9 @@ class data(object):
         
         self.next_batch() # Load Index of Next Batch
 
+        #print('virtual batch : ', self.batch)
+
         for b in range(self.c.nbatch):
-
-
 
             #if self.skip > 0:
 
@@ -398,7 +512,11 @@ class data(object):
 
             elif self.c.feature_level == 'unit':
 
-                self.nunits[b] = int(self.original_score[self.physical[self.batch[b]]].shape[0] / self.c.sample_rate)
+                nframes = self.original_score[self.physical[self.batch[b]]].shape[0];
+
+                #print('nframes / sample rate - 1 => {} / {} = {}'.format(nframes, self.c.sample_rate, int(nframes / self.c.sample_rate) - 1))
+
+                self.nunits[b] = int(self.original_score[self.physical[self.batch[b]]].shape[0] / self.c.sample_rate) - 1
 
             #else:
 
@@ -446,7 +564,11 @@ class data(object):
 
         if self.shuffle_counter <= 0:
 
-            random.shuffle(self.physical);
+            if self.c.mode == 'train':
+
+                random.shuffle(self.physical);
+
+                print('[*] Shuffle Training Set...')
 
             self.shuffle_counter = self.dataset_size
 
@@ -497,7 +619,7 @@ class data(object):
 
             self.current_batch_max_nunits = 0
 
-            self.current_batch_max_nunits = max([len(r) for r in raw]) - 4
+            self.current_batch_max_nunits = max([len(r) for r in raw]) - 3
 
             self.data = np.zeros([self.c.nbatch, self.current_batch_max_nunits, self.c.unit_feature_size])
 

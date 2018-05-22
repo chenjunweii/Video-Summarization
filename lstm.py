@@ -2,6 +2,9 @@ import io
 import os
 import sys
 import random
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 
 import mxnet
@@ -10,21 +13,34 @@ from wurlitzer import pipes
 
 # custom
 
-from data import data
-from video import *
-from network import *
+try:
+
+    from data import data
+    from video import *
+    from network import *
+    from evaluate import summe
+    from hnm import ghnm, lhnm
+
+except:
+    
+    from .data import data
+    from .video import *
+    from .network import *
+    from .TURN import unit
+    from .evaluate import summe
+    from .hnm import ghnm, lhnm
 
 class vs(object):
    
     def __init__(self, c):
 
-        print ('[*] Initiating Video Summarization ...')
+        print ('[*] Initializing Video Summarization ...')
 
         self.c = c
 
         if self.c.gpu:
 
-            self.device = mx.gpu()
+            self.device = mx.gpu(self.c.device)
 
         else:
 
@@ -42,15 +58,19 @@ class vs(object):
 
     def build(self):
 
-        if self.mode == 'training':
+            #print ('[*] Build Training Network ... ')
 
-            print ('[*] Build Training Network ... ')
+        if self.c.arch == 'lstm':
 
-            if self.c.arch == 'lstm':
+            #BiLSTM(self.symbol['input'], self.weights, self.biases, self.symbol['nframes'], self.nhidden)
 
-                #BiLSTM(self.symbol['input'], self.weights, self.biases, self.symbol['nframes'], self.nhidden)
+            self.net = rnn(self.c.nhidden, self.nd, self.device, self.mode)
 
-                self.net = rnn(self.c.nhidden, self.nd, self.device, self.mode)
+        elif self.c.arch == 'bilstm':
+            
+            self.net = birnn(self.c.nhidden, self.nd, self.device, self.mode)
+            
+            #self.testnet = rnn(self.c.nhidden, self.nd, self.device, 'inference')
 
                 #self.node['p'] = self.net(self.symbol['input'])
 
@@ -116,7 +136,7 @@ class vs(object):
 
     def train(self, target_step, checkpoint):
 
-        self.mode = 'training'
+        self.mode = 'train'; self.c.mode = 'train';
 
         print ('[*] Mode : {}'.format('Training'))
 
@@ -134,19 +154,21 @@ class vs(object):
 
             self.ct = copy.deepcopy(self.c)
 
-            print('dataset size : ', d.dataset_size)
-
             self.ct.dataset_name = self.c.dtest
 
-            self.ct.nbatch = d.dataset_size
+            self.ct.nbatch = self.c.tb
+
+            self.ct.mode = 'test'
 
             dt = data(self.ct)
 
             dt.next()
 
+            #dt.score = dt.score.reshape([self.ct.nbatch, -1])
+
             self.nd['test_input'] = nd.array(dt.data, self.device)
             
-            self.nd['test_target'] = nd.array(dt.score, self.device)
+            #self.nd['test_target'] = nd.array(dt.score, self.device)
 
         print ('[*] Data Shape : ', d.data.shape)
 
@@ -166,9 +188,19 @@ class vs(object):
 
             print ('[*] Restore From CheckPoint => {}'.format(checkpoint))
 
-            current_step = int(checkpoint.split('/')[-1].split('.')[0]) + 1
-
             self.net.load_params(checkpoint, ctx = self.device)
+
+            try:
+
+                current_step = int(checkpoint.split('/')[-1].split('.')[0]) + 1
+
+            except:
+
+                current_step = 0
+            
+            #self.testnet(checkpoint, ctx = self.device)
+
+            #self.testnet.collect_params() = self.net.collect_params()
 
         else:
 
@@ -181,8 +213,17 @@ class vs(object):
         lr_scheduler = mx.lr_scheduler.FactorScheduler(self.c.lrds, self.c.lrft)   
         
         trainer = mx.gluon.Trainer(self.net.collect_params(), 
-                'adam', {'learning_rate': self.c.lr, 
-                         'lr_scheduler' : lr_scheduler})
+                'nadam', {'learning_rate': self.c.lr, 
+                         'lr_scheduler' : lr_scheduler,
+                         'clip_gradient': 1})
+        
+        history = dict()
+
+        history['acc'] = dict(); history['loss'] = dict(); history['eval'] = dict()
+
+        history['acc']['step'] = [0]; history['acc']['raw'] = [0]; history['acc']['bal'] = [0];
+
+        history['eval']['step'] = [0]; history['eval']['fscore'] = [0]; history['eval']['length'] = [0];
         
         while current_step < target_step + 1:
 
@@ -190,37 +231,13 @@ class vs(object):
 
                 prediction = self.net(self.nd['input'])
 
-                np_mask = np.zeros_like(d.score)#np.zeros([self.c.nbatch, d.current_batch_max_nunits, 1])
+                prediction_keyframe = prediction > self.c.ith
 
-                effective_unit = 0
-
-                for b in range(self.c.nbatch):
-
-                    n_positive = int(np.sum(d.score[b]))
-
-                    n_negative = int(n_positive * self.c.np_ratio)
-
-                    effective_unit += n_positive
-
-                    effective_unit += n_negative
-
-                    negative_list = list(range(d.current_batch_max_nunits)) 
-
-                    positive_index = np.where(d.score[b] == 1)
-
-                    for p_idx in positive_index[0]:
-
-                        negative_list.remove(p_idx)
-
-                        np_mask[b, p_idx] = 1
-
-                    negative_index = random.sample(negative_list, n_negative)
-
-                    for n_idx in negative_index:
-
-                        np_mask[b, n_idx] = 1
-
-                loss = nd.sum(cross_entropy(prediction, self.nd['target']) * nd.array(np_mask, self.device)) / max(1, effective_unit)
+                [np_mask, p_mask, n_mask], [n_pos, n_neg, _] = ghnm(prediction_keyframe, d, self.c.np_ratio)
+                
+                loss = nd.sum(cross_entropy(prediction, self.nd['target']) * nd.array(np_mask, self.device)) / (n_pos + n_neg)
+                
+                #loss = nd.mean(cross_entropy(prediction, self.nd['target']))# * nd.array(np_mask, self.device)) / (n_positive + n_negative)
                 
                 loss.backward()
 
@@ -228,67 +245,108 @@ class vs(object):
 
             #print('self.net : ', self.net.collect_params().get('lstm0_l0_i2h_weight').data())
 
-            print ('[*] Step : {}, Loss : {}, LR : {}'.format(current_step, loss.asnumpy()[0], trainer.learning_rate))
+            print ('[*] Step : {}, Loss : {:.3f}, LR : {:}, Pos : {}, Neg : {}'.format(current_step, loss.asnumpy()[0], trainer.learning_rate, n_pos, n_neg))
 
             if current_step % self.c.ss == 0 and current_step != 0:
 
-                savepath = 'model/{}.chk'.format(current_step)
+                savepath = 'model/{}_dtrain[{}]_dtest[{}]_racc[{:.2f}]_bacc[{:.2f}]_tth[{}]_ith[{}]_np[{}]_arch[{}].chk'.format(current_step,
+                        self.c.dtrain,
+                        self.c.dtest,
+                        history['acc']['raw'][-1] * 100,
+                        history['acc']['bal'][-1] * 100,
+                        self.c.tth,
+                        self.c.ith,
+                        self.c.np_ratio,
+                        self.c.arch)
 
                 self.net.save_params(savepath) #
-
+                
                 print ('[*] CheckPoint is saved to => {}'.format(savepath))
 
             if self.c.test_step > 0 and current_step != 0 and current_step % self.c.test_step == 0:
 
                 print('\n[*] ===== Testing ===== \n')
 
-                p = self.net(self.nd['test_input'])
+                p = self.net(self.nd['test_input']).asnumpy()#.reshape([self.ct.nbatch, -1])
 
-                k = (p > 0.5) #threshold) # key frame
-
-                kmap = np.zeros([self.ct.nbatch, dt.current_batch_max_nunits])
-
-                np_mask = np.zeros_like(kmap)#np.zeros([self.c.nbatch, d.current_batch_max_nunits, 1])
-
-                effective_unit = 0
-
-                for b in range(self.ct.nbatch):
-
-                    n_positive = int(np.sum(dt.score[b]))
-
-                    #print('n positive : ', n_positive)
-
-                    n_negative = int(n_positive * 1)
-
-                    effective_unit += n_positive
-
-                    effective_unit += n_negative
-
-                    negative_list = list(range(dt.current_batch_max_nunits)) 
-
-                    positive_index = np.where(dt.score[b] == 1)
-
-                    for p_idx in positive_index[0]:
-
-                        negative_list.remove(p_idx)
-
-                        np_mask[b, p_idx] = 1
-
-                    negative_index = random.sample(negative_list, n_negative)
-                    
-                    for n_idx in negative_index:
-
-                        np_mask[b, n_idx] = 1
-
-                for b in range(self.ct.nbatch):
-
-                    kmap[b, : dt.nunits[b]][:] = 1
+                pk = (p >= self.c.ith) #threshold) # positive key frame
                 
-                #`a = float((1 - np.sum(nd.abs(k - self.nd['test_target']).asnumpy().reshape([self.ct.nbatch, -1]) * kmap * np_mask) / np.sum(dt.nunits)))# accuracy
-                a = float((1 - np.sum(nd.abs(k - self.nd['test_target']).asnumpy().reshape([self.ct.nbatch, -1]) * kmap * np_mask) / max(effective_unit, 1)))# accuracy
+                [np_mask, p_mask, n_mask], [n_pos, n_neg, n_raw_neg] = ghnm(pk, dt, 1)
+                
+                eval_fscore = np.zeros([self.ct.nbatch])
 
-                print('[*] Accuracy : {:.3f} %'.format((a * 100)))
+                eval_length = np.zeros([self.ct.nbatch])
 
+                eval_plot_fscore = np.zeros([8, self.ct.nbatch]) # 8 -> [ith 0 - 0.7]
+                
+                eval_plot_length = np.zeros([8, self.ct.nbatch]) # 8 -> [ith 0 - 0.7]
+                
+                for b in range(self.ct.nbatch):
+
+                    if self.ct.dataset_name == 'SumMe' or self.ct.dataset_name == 'TVSum':
+
+                        eval_fscore[b], eval_length[b] = summe.evaluateSummary_while_training(
+                                #self.unsampling(dt.score[b], dt.nunits[b]), # > self.c.ith,
+                                #dt.user_score[b],
+                                self.unsampling(p[b], dt.nunits[b]) > self.c.ith,
+                                #dt.original_score[b],
+                                dt.user_score[b],
+                                #np.mean(dt.original_user_score[b], axis = 1),
+                                #dt.original_score[b],
+                                #dt.score[b],
+                                #dt.score[b],
+                                #np.array([0,0,1,1,1]),
+                                #np.array([1,1,1,1,1]),
+                                self.ct.dataset_name)
+
+                        for i in range(8):
+
+                            eval_plot_fscore[i, b], eval_plot_length[i, b] = summe.evaluateSummary_while_training(
+                                    self.unsampling(p[b], dt.nunits[b]) > i * 0.1,
+                                    dt.user_score[b],
+                                    self.ct.dataset_name)
+
+                    elif self.ct.dataset_name == 'TVSum':
+
+                        eval_fscore[b], eval_length[b] = tvsum.evaluateSummary()
+                """ 
+                print('[*] =========================== ')
+
+                print('[*] ith testing\n')
+
+                for i in range(8):
+
+                    print('[*] ------------------------ ')
+
+                    print('[*] tth = {}'.format(self.c.tth))
+
+                    print('[*] ith = {}'.format(i * 0.1))
+                    
+                    print('[*] Average F-Score : {}'.format(np.mean(eval_plot_fscore[i])))
+                    
+                    print('[*] Average Summary Length : {}'.format(np.mean(eval_plot_length[i])))
+
+                print('\n[*] =========================== ')
+                """
+                raw_a = float(1 - np.mean(np.abs(pk - dt.score)))
+                
+                a = float((1 - np.sum(np.abs(pk - dt.score) * np_mask) / (n_pos + n_neg)))
+
+                print('[*] Raw Accuracy : {:.3f} %'.format(raw_a * 100))
+                
+                print('[*] Raw Positive / Negative : {} / {}'.format(n_pos, n_raw_neg))
+                
+                print('[*] Balanced Accuracy : {:.3f} %'.format((a * 100)))
+                
+                print('[*] Balanced Positive / Negative : {} / {}'.format(n_pos, n_neg))
+                
+                print('[*] Average F-Score : {:.3f}'.format((eval_fscore.mean())))
+                
+                print('[*] Average Summray Length : {}'.format(eval_length.mean()))
+
+                history['acc']['step'].append(current_step); history['acc']['raw'].append(raw_a); history['acc']['bal'].append(a)
+                
+                history['eval']['step'].append(current_step); history['eval']['fscore'].append(eval_fscore.mean()); history['eval']['length'].append(eval_length.mean())
                 print('\n[*] =============== \n')
                 
                 dt.next()
@@ -296,7 +354,17 @@ class vs(object):
                 self.nd['test_input'] = nd.array(dt.data, self.device)
                 
                 self.nd['test_target'] = nd.array(dt.score, self.device)
+            
+            if current_step % self.c.pstep  == 0 and current_step != 0:
+            
+                self.plot(current_step, 'Raw Accuracy', history['acc']['step'], history['acc']['raw'])
 
+                self.plot(current_step, 'Balanced Accuracy', history['acc']['step'], history['acc']['bal'])
+                
+                self.plot(current_step, 'F-Score', history['eval']['step'], history['eval']['fscore'])
+                
+                self.plot(current_step, 'Summary Length', history['eval']['step'], history['eval']['length'])
+            
             d.next()
 
             self.nd['input'] = nd.array(d.data, self.device)
@@ -304,34 +372,142 @@ class vs(object):
             self.nd['target'] = nd.array(d.score, self.device)
             
             current_step += 1
+        
+        self.plot(current_step, 'Raw Accuracy', history['acc']['step'], history['acc']['raw'])
 
-    def inference(self, filename, model, threshold):
+        self.plot(current_step, 'Balanced Accuracy', history['acc']['step'], history['acc']['bal'])
+
+        self.plot(current_step, 'F-Score', history['eval']['step'], history['eval']['fscore'])
+        
+        self.plot(current_step, 'Summary Length', history['eval']['step'], history['eval']['length'])
+        
+        print('[*] Last Model is save to => {}'.format('last.chk'))
+
+        self.net.save_params('last.chk') #
+        
+        return
+
+    def plot(self, current_step, mode, step, accuracy):
+
+        plt.plot(step, accuracy)
+
+        plt.figtext(0.15, 0.62, 'Train Set : {}\n'
+                'Testing Set : {}\n' 
+                'Train Batch Size : {}\n'
+                'Total Step : {}\n'
+                'Train Threshold : {}\n'
+                'Inference Threshold : {}\n'
+                'Negative / Positive : {}\n'
+                'Architecture : {}'.format(self.c.dtrain, self.c.dtest, self.c.nbatch, current_step, self.c.tth, self.c.ith, self.c.np_ratio, self.c.arch),
+                bbox = {'facecolor' : 'blue', 'alpha' : 0.1, 'pad' : 10})
+
+        plt.xlabel('Step')
+
+        plt.ylabel(mode)
+        
+        plt.ylim([0, 1])
+
+        plt.savefig('train[{}]_'
+        'test[{}]_'
+        'batchsize[{}]_'
+        'step[{}]_'
+        'tth[{}]_'
+        'ith[{}]_'
+        'npr[{}]_'
+        'arch[{}]_{}.png'.format(self.c.dtrain, self.c.dtest, self.c.nbatch, current_step, self.c.tth, self.c.ith, self.c.np_ratio, self.c.arch, mode))
+
+        plt.clf()
+
+    def inference(self, filename, infmode = 'generate', sampling = True, dataset = '', reuse = False):
         
         print ('[*] Mode : {}'.format('Inference'))
 
-        self.mode = 'inference'
-        
-        if model == '':
-
-            raise ValueError('Model using for inference is not set properly')
-
-        if not os.path.isfile(filename):
+        if not os.path.isfile(filename) and dataset == '':
 
             raise ValueError('File => {} is not exist', filename)
 
        # sampling
-       
-        unit_feature, unit_id = unit.sampling(filename, self.c.size, self.c.unit_size, self.c.sample_rate, self.c.net, self.c.gpu, self.c.mfe, reuse = False, mode = self.mode)
 
+        unit_feature = None
+
+        unit_id = None
+
+        if sampling:
+       
+            unit_feature, unit_id = unit.sampling(filename, 
+                    self.c.size,
+                    self.c.unit_size,
+                    self.c.sample_rate,
+                    self.c.net,
+                    self.c.gpu,
+                    self.c.mfe,
+                    reuse = False,
+                    mode = self.mode)
+
+        else:
+
+            import h5py
+
+            filename_without_path_ext = filename.split('.')[0].split('/')[-1]
+
+            print('path : ',
+                    os.path.join('vs', 'feature', dataset, 'unit', '{}_US[{}]_SR[{}].h5'.format(filename_without_path_ext,
+                self.c.unit_size,
+                self.c.sample_rate)))
+            
+            h5 = h5py.File(os.path.join('vs', 'feature', dataset, 'unit', '{}_US[{}]_SR[{}].h5'.format(filename_without_path_ext,
+                self.c.unit_size,
+                self.c.sample_rate)))
+            
+            nframs = int(np.array(h5['nframes']))
+
+            fidx = 0
+
+            nunits = len(list(h5.keys())) - 5
+
+            unit_feature = np.zeros([1, nunits, self.c.unit_feature_size])
+                
+            for uidx in range(nunits):
+
+                fstart = uidx * self.c.sample_rate
+
+                fend = fstart + self.c.unit_size - 1
+
+                unit_feature[0, uidx][:] = np.array(h5['{}_{}'.format(fstart, fend)])
+            
         self.nd['input'] = nd.array(unit_feature, self.device)
         
         self.build()
         
-        self.net.load_params(self.c.mvs)
+        self.net.load_params(self.c.mvs, self.device)
 
-        score = self.net(self.nd)
+        score = self.net(self.nd['input']).asnumpy().reshape([-1])
 
-        print ('[*] Data Shape => ', self.features.shape)
+        if infmode == 'generate':
 
-        generate_video(filename, score, threshold)
+            generate_video(filename, score, threshold)
+       
+        elif infmode == 'api':
 
+            return self.unsampling(score)
+
+    def unsampling(self, unit_score, nunits = None):
+        
+        frame_score = None
+
+        effective_number_unit = unit_score.shape[0] if nunits is None else nunits
+
+        frame_score = np.zeros([(effective_number_unit + 1) * self.c.sample_rate])
+
+        for uidx in range(effective_number_unit):
+
+            start = uidx * self.c.sample_rate
+
+            end = start + self.c.unit_size - 1
+
+            frame_score[ start : end ] += unit_score[uidx]
+            #frame_score[ start : end ] = unit_score[uidx]
+
+        frame_score[self.c.sample_rate : - self.c.sample_rate] /= 2
+        
+        return frame_score

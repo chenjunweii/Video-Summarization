@@ -3,23 +3,55 @@ from mxnet import nd
 
 def cross_entropy(p, g):
 
-    return -g * nd.log(p) - (1 - g) * nd.log(1 - p)
+    return -g * nd.log(nd.clip(p, 1e-5, 1)) - (1 - g) * nd.log(nd.clip(1 - p, 1e-5, 1))
 
-def rnn(nhidden, weight, device, mode):
+def rnn(nhidden, weight, device, mode, dropout = 0.5):
 
     net = mx.gluon.nn.Sequential()
 
+    if mode != 'train':
+
+        dropout = 0
+    
     with net.name_scope():
+
+        net.add(mx.gluon.rnn.LSTM(nhidden[0], layout = 'NTC', dropout = dropout))
         
-        net.add(mx.gluon.rnn.LSTM(nhidden[0], layout = 'NTC'))
-        
-        net.add(mx.gluon.rnn.LSTM(nhidden[1], layout = 'NTC'))
+        net.add(mx.gluon.rnn.LSTM(nhidden[1], layout = 'NTC', dropout = dropout))
         
         net.add(mx.gluon.rnn.LSTM(1, layout = 'NTC'))
+
+        #net.add(mx.gluon.nn.Dense(1, activation = 'sigmoid'))
+        #if mode == 'Training':
+
+        #    net.add(mx.gluon.nn.Dropout(.5))
         
-        net.add(mx.gluon.nn.Activation('sigmoid'))
+        #net.add(mx.gluon.nn.Activation('sigmoid'))
 
     return net
+
+def birnn(nhidden, weight, device, mode, dropout = 0.5):
+
+    net = mx.gluon.nn.Sequential()
+
+    if mode != 'train':
+
+        dropout = 0
+    
+    with net.name_scope():
+
+        #net.add(mx.gluon.rnn.LSTM(nhidden[0], layout = 'NTC', bidirectional = True, dropout = dropout))
+        
+        net.add(mx.gluon.rnn.LSTM(nhidden[1], layout = 'NTC', bidirectional = True, dropout = dropout))
+        
+       # net.add(mx.gluon.rnn.(1, layout = 'NTC'))
+
+        net.add(mx.gluon.rnn.LSTM(1, layout = 'NTC'))
+        
+        #net.add(mx.gluon.nn.Activation('sigmoid'))
+
+    return net
+    
     """ 
     with self.name_scope():
         

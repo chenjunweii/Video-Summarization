@@ -2,11 +2,14 @@
 *.pyc
 SumMe/
 TURN/
+TVSum/
 VSUMM/
 unit/
 model/
 feature/
 extract/
+evaluate
 test.py
+*.chk
 
 
