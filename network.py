@@ -71,8 +71,36 @@ def birnn(nhidden, weight, device, mode, dropout = 0.5):
     """
 
         
+def encoder_decoder(nhidden, weight, device, mode, dropout = 0.5):
 
+    net = mx.gluon.nn.Sequential()
 
+    if mode != 'train':
+
+        dropout = 0
+    
+    with net.name_scope('encoder'):
+
+        #net.add(mx.gluon.rnn.LSTM(nhidden[0], layout = 'NTC', bidirectional = True, dropout = dropout))
+        
+        net.add(mx.gluon.rnn.LSTM(nhidden[1], layout = 'NTC', bidirectional = True, dropout = dropout))
+
+       # net.add(mx.gluon.rnn.(1, layout = 'NTC'))
+
+        net.add(mx.gluon.rnn.LSTM(1, layout = 'NTC'))
+        
+    with net.name_scope('decoder'):
+
+        #net.add(mx.gluon.rnn.LSTM(nhidden[0], layout = 'NTC', bidirectional = True, dropout = dropout))
+        
+        net.add(mx.gluon.rnn.LSTM(nhidden[1], layout = 'NTC', bidirectional = True, dropout = dropout))
+
+       # net.add(mx.gluon.rnn.(1, layout = 'NTC'))
+
+        net.add(mx.gluon.rnn.LSTM(1, layout = 'NTC'))
+        #net.add(mx.gluon.nn.Activation('sigmoid'))
+
+    return net
 
 def lstm(inputs, n_hidden, n_sequence, weights, biases):
 

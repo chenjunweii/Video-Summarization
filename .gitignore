@@ -8,8 +8,9 @@ unit/
 model/
 feature/
 extract/
-evaluate
 test.py
 *.chk
-
+*.zip
+*.pdf
+test*.py
 

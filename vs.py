@@ -277,10 +277,6 @@ class vs(object):
 
                 eval_length = np.zeros([self.ct.nbatch])
 
-                eval_plot_fscore = np.zeros([8, self.ct.nbatch]) # 8 -> [ith 0 - 0.7]
-                
-                eval_plot_length = np.zeros([8, self.ct.nbatch]) # 8 -> [ith 0 - 0.7]
-                
                 for b in range(self.ct.nbatch):
 
                     if self.ct.dataset_name == 'SumMe' or self.ct.dataset_name == 'TVSum':
@@ -298,13 +294,6 @@ class vs(object):
                                 #np.array([0,0,1,1,1]),
                                 #np.array([1,1,1,1,1]),
                                 self.ct.dataset_name)
-
-                        for i in range(8):
-
-                            eval_plot_fscore[i, b], eval_plot_length[i, b] = summe.evaluateSummary_while_training(
-                                    self.unsampling(p[b], dt.nunits[b]) > i * 0.1,
-                                    dt.user_score[b],
-                                    self.ct.dataset_name)
 
                     elif self.ct.dataset_name == 'TVSum':
 
@@ -381,11 +370,11 @@ class vs(object):
         
         self.plot(current_step, 'Summary Length', history['eval']['step'], history['eval']['length'])
         
-        print('[*] Last Model is save to => {}'.format('last.chk'))
+        #print('[*] Last Model is save to => {}'.format('last.chk'))
 
-        self.net.save_params('last.chk') #
+        #self.net.save_params('last.chk') #
         
-        return
+        return history
 
     def plot(self, current_step, mode, step, accuracy):
 

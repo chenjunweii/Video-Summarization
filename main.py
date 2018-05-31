@@ -1,15 +1,16 @@
-import tensorflow as tf
 import data
 import network
-from lstm import vs
+from vs import vs
 from config import config
 import argparse
 import h
-
+import numpy as np
 
 parser = argparse.ArgumentParser(description = 'Process some integers.')
 
 parser.add_argument('-t', '--train', action = 'store_true', default = False)
+
+parser.add_argument('-ot', action = 'store_true', default = False)
 
 parser.add_argument('-i', '--inference', action = 'store_true', default = False)
 
@@ -43,13 +44,15 @@ parser.add_argument('-lrft', type = float, default = 0.9)
 
 parser.add_argument('-lrds', type = int, default = 1500)
 
-parser.add_argument('-tth', type = float, default = 0.15) # train
+parser.add_argument('-tth', type = float, default = 0.5) # train
 
 parser.add_argument('-ith', type = float, default = 0.7) # inference
 
 parser.add_argument('-ts', type = int, default = 10) # test step
 
 parser.add_argument('-np', type = int, default = 1) # np ratio
+
+parser.add_argument('-nd', type = int, default = 1) # number of devices
 
 parser.add_argument('-b', type = int, default = 5) # batch size
 
@@ -63,9 +66,9 @@ parser.add_argument('-arch', type = str, default = 'lstm') # feature level [unit
 
 args = parser.parse_args()
 
-if ((not args.train) and (not args.inference)):
+if ((not args.train) and (not args.inference) and (not args.ot)):
 
-    raise ValueError('--train or --inference')
+    raise ValueError('--train or --inference' or '-ot')
 
 
 c = config()
@@ -128,16 +131,29 @@ c.lrds = args.lrds
 
 c.lrft = args.lrft
 
-l = vs(c)
+c.checkpoint = args.checkpoint
+
+c.ndevice = args.nd
+
+c.step = args.step
 
 if args.train:
 
-    l.train(args.step, args.checkpoint)
+    l = vs(c)
+    
+    l.train(c.step, c.checkpoint)
 
 elif args.inference:
 
+    l = vs(c)
+    
     l.inference(args.video, )
 
+elif args.ot:
+
+    from optimal import find_optimal
+
+    find_optimal(c, np.arange(0.1, 0.7, 0.1), np.arange(0.1, 0.5, 0.1))
 
 
 
