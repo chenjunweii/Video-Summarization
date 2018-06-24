@@ -7,10 +7,13 @@ VSUMM/
 unit/
 model/
 feature/
+first2000/
+
 extract/
 test.py
 *.chk
 *.zip
 *.pdf
+*.png
 test*.py
 

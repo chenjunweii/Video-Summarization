@@ -64,6 +64,16 @@ parser.add_argument('-fl', type = str, default = 'unit') # feature level [unit, 
 
 parser.add_argument('-arch', type = str, default = 'lstm') # feature level [unit, frame]
 
+parser.add_argument('-an', type = str, default = 'binary') # annotation method, keyframe or importance score
+
+parser.add_argument('-sm', type = str, default = 'unit') # sampling method, frame or unit
+
+parser.add_argument('-lo', type = str, default = 'TNC') # TNC or NTC
+
+parser.add_argument('-sr', type = int, default = 8) # TNC or NTC
+
+parser.add_argument('-us', type = int, default = 16) # TNC or NTC
+
 args = parser.parse_args()
 
 if ((not args.train) and (not args.inference) and (not args.ot)):
@@ -83,7 +93,7 @@ c.nbatch = args.b
 
 c.device = args.device
 
-c.nhidden = [1024, 256]
+c.nhidden = [128]
 
 c.width = 224
 
@@ -100,6 +110,10 @@ c.tth = args.tth # threshold for dataset
 c.ith = args.ith # threshold for prediction
 
 c.max_nframes = 20000 # original max nframes
+
+c.unit_size = args.us
+
+c.sample_rate = args.sr
 
 c.feature_level = args.fl
 
@@ -136,6 +150,12 @@ c.checkpoint = args.checkpoint
 c.ndevice = args.nd
 
 c.step = args.step
+
+c.an = args.an
+
+c.sm = args.sm
+
+c.lo = args.lo
 
 if args.train:
 

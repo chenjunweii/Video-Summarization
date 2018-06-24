@@ -121,4 +121,4 @@ def ghnm(ps, d, np_ratio):
 
         n_mask[a1, a2] = 1
 
-    return [np_mask, p_mask, n_mask], [num_positive, num_negative, num_raw_negative]
+    return [np_mask.swapaxes(0,1), p_mask.swapaxes(0,1), n_mask.swapaxes(0,1)], [num_positive, num_negative, num_raw_negative]

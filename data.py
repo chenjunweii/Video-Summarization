@@ -334,9 +334,7 @@ class data(object):
 
     def next_keyframe_unit_target(self):
 
-        #print('next Keyframe Unit ')
-
-        #print('current_batch_max_nunits : ', self.current_batch_max_nunits)
+        #print('current max unit : ', self.current_batch_max_nunits)
 
         self.score = np.zeros((self.c.nbatch, self.current_batch_max_nunits, 1))
         
@@ -354,22 +352,27 @@ class data(object):
 
                 unit_score = None
 
-                if self.dataset_name == 'SumMe' or 'TVSum':
+                if self.c.sample_rate == 1:
 
-                    #print('unit_score : ', self.original_score[self.physical[self.batch[b]]][start : end])
-                    #print('unit_score : ', np.mean(self.original_score[self.physical[self.batch[b]]][start : end]))
+                    unit_score = self.original_score[self.physical[self.batch[b]]][start]
 
-                    #print('original_score : ', self.original_score[self.physical[self.batch[b]]].shape)
+                elif self.dataset_name == 'SumMe' or 'TVSum':
 
                     unit_score = np.mean(self.original_score[self.physical[self.batch[b]]][start : end])
 
                 elif self.dataset_name == 'VSUMM':
                 
                     unit_score = np.sum(self.original_score[self.physical[self.batch[b]]][start : end])
+
+                # set score to 1 if unit_score > threshold
                 
-                if unit_score > self.c.tth:
+                if unit_score > self.c.tth and self.c.an == 'binary':
 
                     self.score[b, u] = 1.0
+
+                else:
+
+                    ValueError("[!] Importrance Score annotation have't implement yet")
                 
                 #self.score[b,u] = unit_score
                 
@@ -386,12 +389,6 @@ class data(object):
 
     def next_keyframe_skip(self):
 
-        #print self.max_nframes
-
-        print('b : ', self.c.nbatch)
-
-        print('max : ', self.c.max_nframes)
-        
         self.score = np.zeros((self.c.nbatch, self.c.max_nframes, 1))
 
         queue = []
@@ -432,12 +429,6 @@ class data(object):
 
                     m = int(f / self.skip) # map to skipped score
 
-                    print(self.score.shape)
-
-                    print('b : ', b)
-
-                    print('m : ', m)
-
                     self.score[b, m] = 1.0
 
                     for offset in range(self.erange):
@@ -463,12 +454,6 @@ class data(object):
         self.score = np.zeros((self.nbatch, self.max_nframes, 1))
 
         for b in range(self.nbatch):
-            
-            #s = [0] * self.nframes[b]
-
-            #print 'original_score : ', self.original_score[self.physical[self.batch[b]]].shape
-
-            #print 'sequence length : ', self.nframes[b]
             
             for f in range(self.nframes[b]):
 
@@ -590,7 +575,9 @@ class data(object):
             else:
 
                 pass#print ('                 => {}'.format(feature_filepath))
-            
+
+            #print(feature_filepath)
+
             H5 = h5py.File(feature_filepath, 'r')
 
             if self.c.feature_level == 'frame': 
@@ -653,11 +640,15 @@ class data(object):
 
             elif self.c.feature_level == 'unit':
 
+                context_size = int((self.c.unit_size - 1) / 2)
+
                 for u in range(self.current_batch_max_nunits):
 
-                    start = u * self.c.sample_rate
+                    fidx = u * self.c.sample_rate
 
-                    end = start + self.c.unit_size - 1
+                    start = fidx - context_size
+
+                    end = fidx + context_size + 1
 
                     #print(list(raw[b].keys()))
 
@@ -670,6 +661,12 @@ class data(object):
                             self.data[b, u][:] = raw[b]['{}_{}'.format(start, end)]
 
                         except:
+
+                            print('start : ', start)
+
+                            print('end : ', end)
+
+                            print('data not exist')
 
                             self.data[b, u][:] = np.zeros([1, self.c.unit_feature_size])
                     else:
